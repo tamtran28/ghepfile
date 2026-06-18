@@ -66,16 +66,12 @@ from pathlib import Path
 # CẤU HÌNH TRANG
 # =========================================================
 st.set_page_config(
-    page_title="Ghép file và chỉnh sửa dữ liệu",
+    page_title="Công cụ ghép file Excel/CSV",
     page_icon="📂",
     layout="wide"
 )
 
-st.title("📂 Ghép file và chỉnh sửa dữ liệu")
-st.caption(
-    "Tải nhiều file Excel/CSV, ghép dữ liệu, chỉnh sửa trực tiếp "
-    "và tải kết quả xuống."
-)
+st.title("📂 Công cụ ghép file Excel/CSV")
 
 
 # =========================================================
@@ -83,8 +79,8 @@ st.caption(
 # =========================================================
 def read_csv_file(uploaded_file):
     """
-    Đọc CSV với một số bảng mã thường gặp.
-    Toàn bộ dữ liệu được đọc dạng chuỗi để tránh mất số 0 đầu.
+    Đọc file CSV bằng nhiều bảng mã khác nhau.
+    Toàn bộ dữ liệu được đọc dưới dạng chuỗi.
     """
     file_bytes = uploaded_file.getvalue()
 
@@ -110,7 +106,7 @@ def read_csv_file(uploaded_file):
 
     raise ValueError(
         f"Không thể đọc file CSV {uploaded_file.name}. "
-        f"Lỗi cuối cùng: {last_error}"
+        f"Lỗi: {last_error}"
     )
 
 
@@ -120,7 +116,6 @@ def read_csv_file(uploaded_file):
 def read_excel_file(uploaded_file):
     """
     Đọc sheet đầu tiên của file Excel.
-    Dữ liệu được đọc dạng chuỗi để giữ nguyên mã và số 0 đầu.
     """
     return pd.read_excel(
         uploaded_file,
@@ -131,22 +126,39 @@ def read_excel_file(uploaded_file):
 
 
 # =========================================================
-# HÀM XUẤT EXCEL
+# HÀM ĐỌC FILE CHUNG
 # =========================================================
-def dataframe_to_excel(dataframe):
-    """
-    Chuyển DataFrame thành file Excel trong bộ nhớ.
-    """
+def read_uploaded_file(uploaded_file):
+    file_extension = Path(uploaded_file.name).suffix.lower()
+
+    if file_extension == ".csv":
+        df = read_csv_file(uploaded_file)
+    else:
+        df = read_excel_file(uploaded_file)
+
+    # Xóa khoảng trắng thừa trong tên cột
+    df.columns = [
+        str(column).strip()
+        for column in df.columns
+    ]
+
+    return df
+
+
+# =========================================================
+# HÀM CHUYỂN DATAFRAME THÀNH FILE EXCEL
+# =========================================================
+def dataframe_to_excel(dataframe, sheet_name="Du_lieu_ghep"):
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         dataframe.to_excel(
             writer,
             index=False,
-            sheet_name="Du_lieu_ghep"
+            sheet_name=sheet_name
         )
 
-        worksheet = writer.sheets["Du_lieu_ghep"]
+        worksheet = writer.sheets[sheet_name]
 
         # Cố định dòng tiêu đề
         worksheet.freeze_panes = "A2"
@@ -157,13 +169,15 @@ def dataframe_to_excel(dataframe):
 
         # Điều chỉnh độ rộng cột
         for column_cells in worksheet.columns:
-            max_length = 0
             column_letter = column_cells[0].column_letter
+            max_length = 0
 
             for cell in column_cells:
                 if cell.value is not None:
-                    cell_length = len(str(cell.value))
-                    max_length = max(max_length, cell_length)
+                    max_length = max(
+                        max_length,
+                        len(str(cell.value))
+                    )
 
             worksheet.column_dimensions[column_letter].width = min(
                 max(max_length + 2, 12),
@@ -175,6 +189,33 @@ def dataframe_to_excel(dataframe):
 
 
 # =========================================================
+# CHỌN CHỨC NĂNG
+# =========================================================
+st.subheader("Chọn chức năng")
+
+selected_mode = st.radio(
+    label="Bạn muốn thực hiện theo cách nào?",
+    options=[
+        "1. Ghép file giữ nguyên",
+        "2. Ghép file nâng cao"
+    ],
+    horizontal=True
+)
+
+if selected_mode == "1. Ghép file giữ nguyên":
+    st.info(
+        "Chức năng này chỉ ghép dữ liệu từ nhiều file và tải xuống. "
+        "Không thêm cột file nguồn và không chỉnh sửa trực tiếp."
+    )
+
+else:
+    st.info(
+        "Chức năng này sẽ thêm cột FILE_NGUON và cho phép "
+        "chỉnh sửa, thêm hoặc xóa dòng trước khi tải xuống."
+    )
+
+
+# =========================================================
 # UPLOAD FILE
 # =========================================================
 uploaded_files = st.file_uploader(
@@ -183,6 +224,10 @@ uploaded_files = st.file_uploader(
     type=["xlsx", "xls", "csv"]
 )
 
+
+# =========================================================
+# XỬ LÝ FILE
+# =========================================================
 if uploaded_files:
     dataframes = []
     error_files = []
@@ -196,25 +241,15 @@ if uploaded_files:
                 f"Đang xử lý: **{uploaded_file.name}**"
             )
 
-            file_extension = Path(uploaded_file.name).suffix.lower()
+            df = read_uploaded_file(uploaded_file)
 
-            if file_extension == ".csv":
-                df = read_csv_file(uploaded_file)
-            else:
-                df = read_excel_file(uploaded_file)
-
-            # Chuẩn hóa tên cột
-            df.columns = [
-                str(column).strip()
-                for column in df.columns
-            ]
-
-            # Thêm cột tên file nguồn ở vị trí đầu tiên
-            df.insert(
-                0,
-                "FILE_NGUON",
-                uploaded_file.name
-            )
+            # Chỉ nhánh nâng cao mới thêm tên file nguồn
+            if selected_mode == "2. Ghép file nâng cao":
+                df.insert(
+                    0,
+                    "FILE_NGUON",
+                    uploaded_file.name
+                )
 
             dataframes.append(df)
 
@@ -234,7 +269,7 @@ if uploaded_files:
     status_text.empty()
 
     # =====================================================
-    # HIỂN THỊ FILE BỊ LỖI
+    # HIỂN THỊ FILE LỖI
     # =====================================================
     if error_files:
         st.warning("Một số file không thể đọc được:")
@@ -246,7 +281,7 @@ if uploaded_files:
         )
 
     # =====================================================
-    # GHÉP DỮ LIỆU
+    # GHÉP FILE
     # =====================================================
     if dataframes:
         final_df = pd.concat(
@@ -255,19 +290,49 @@ if uploaded_files:
             sort=False
         )
 
-        # Thay NaN phát sinh do các file không giống cột nhau
         final_df = final_df.fillna("")
 
         st.success(
-            f"Đã đọc thành công **{len(dataframes)} file** – "
+            f"Đã ghép thành công **{len(dataframes)} file** – "
             f"tổng cộng **{len(final_df):,} dòng** và "
             f"**{len(final_df.columns):,} cột**."
         )
 
         # =================================================
-        # THỐNG KÊ THEO FILE NGUỒN
+        # NHÁNH 1: GHÉP FILE GIỮ NGUYÊN
         # =================================================
-        with st.expander("📊 Xem số lượng dòng theo từng file"):
+        if selected_mode == "1. Ghép file giữ nguyên":
+            st.subheader("📊 Dữ liệu đã ghép")
+
+            st.dataframe(
+                final_df,
+                use_container_width=True,
+                hide_index=True,
+                height=600
+            )
+
+            excel_data = dataframe_to_excel(
+                final_df,
+                sheet_name="Du_lieu_ghep"
+            )
+
+            st.download_button(
+                label="📥 Tải file Excel đã ghép",
+                data=excel_data,
+                file_name="file_ghep_giu_nguyen.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                use_container_width=True
+            )
+
+        # =================================================
+        # NHÁNH 2: THÊM FILE NGUỒN + CHỈNH SỬA
+        # =================================================
+        else:
+            st.subheader("📊 Thống kê dữ liệu theo file nguồn")
+
             file_summary = (
                 final_df["FILE_NGUON"]
                 .value_counts(dropna=False)
@@ -281,55 +346,63 @@ if uploaded_files:
                 hide_index=True
             )
 
-        st.subheader("✏️ Chỉnh sửa dữ liệu trước khi tải xuống")
+            st.subheader("✏️ Chỉnh sửa dữ liệu")
 
-        st.info(
-            "Bạn có thể nhấp đúp vào ô để sửa, sao chép dữ liệu từ Excel "
-            "để dán vào bảng, thêm dòng mới hoặc chọn dòng để xóa."
-        )
+            st.caption(
+                "Nhấp đúp vào ô để sửa dữ liệu. "
+                "Có thể thêm dòng mới hoặc chọn dòng để xóa."
+            )
 
-        # =================================================
-        # BẢNG CHỈNH SỬA
-        # =================================================
-        edited_df = st.data_editor(
-            final_df,
-            key="data_editor_ghep_file",
-            use_container_width=True,
-            hide_index=True,
-            num_rows="dynamic",
-            height=600,
-            column_config={
-                "FILE_NGUON": st.column_config.TextColumn(
-                    "File nguồn",
-                    help="Tên file chứa dòng dữ liệu ban đầu",
-                    width="medium"
-                )
-            }
-        )
+            edited_df = st.data_editor(
+                final_df,
+                key="data_editor_ghep_file",
+                use_container_width=True,
+                hide_index=True,
+                num_rows="dynamic",
+                height=600,
+                column_config={
+                    "FILE_NGUON": st.column_config.TextColumn(
+                        "File nguồn",
+                        help="Tên file chứa dòng dữ liệu ban đầu",
+                        width="medium"
+                    )
+                }
+            )
 
-        # Chuẩn hóa lại dữ liệu sau chỉnh sửa
-        edited_df = edited_df.fillna("")
+            edited_df = edited_df.fillna("")
 
-        st.write(
-            f"Dữ liệu sau chỉnh sửa: **{len(edited_df):,} dòng** – "
-            f"**{len(edited_df.columns):,} cột**."
-        )
+            col1, col2, col3 = st.columns(3)
 
-        # =================================================
-        # XUẤT FILE
-        # =================================================
-        excel_data = dataframe_to_excel(edited_df)
+            col1.metric(
+                "Số file",
+                len(dataframes)
+            )
 
-        st.download_button(
-            label="📥 Tải file Excel sau khi chỉnh sửa",
-            data=excel_data,
-            file_name="file_ghep_da_chinh_sua.xlsx",
-            mime=(
-                "application/vnd.openxmlformats-officedocument."
-                "spreadsheetml.sheet"
-            ),
-            use_container_width=True
-        )
+            col2.metric(
+                "Số dòng ban đầu",
+                f"{len(final_df):,}"
+            )
+
+            col3.metric(
+                "Số dòng sau chỉnh sửa",
+                f"{len(edited_df):,}"
+            )
+
+            excel_data = dataframe_to_excel(
+                edited_df,
+                sheet_name="Du_lieu_da_chinh_sua"
+            )
+
+            st.download_button(
+                label="📥 Tải file Excel sau khi chỉnh sửa",
+                data=excel_data,
+                file_name="file_ghep_da_chinh_sua.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                use_container_width=True
+            )
 
 else:
     st.info("Vui lòng tải lên ít nhất một file Excel hoặc CSV.")
